@@ -218,6 +218,7 @@
   var activeId = null;
   var loadTimer = null;
   var inflight = null;
+  var inflightBox = null;   // area the current request covers
 
   // ---------- Map ----------
   var map = L.map("map", { zoomControl: false, attributionControl: true })
@@ -332,7 +333,10 @@
     hideToast();
     var view = map.getBounds();
     if (covered(view)) { render(); return; }
+    // A request for this area is already on its way: let it finish rather than restarting it
+    if (inflight && inflightBox && inflightBox.contains(view)) return;
     var box = view.pad(0.5);
+    inflightBox = box;
     var bb = [box.getSouth(), box.getWest(), box.getNorth(), box.getEast()].map(function (n) { return n.toFixed(5); }).join(",");
     var q = "[out:json][timeout:25];(" +
       'nwr["amenity"="drinking_water"](' + bb + ");" +
@@ -355,8 +359,9 @@
       if (err && err.name === "AbortError") return;
       inflight = null;
       loading(false);
-      toast("Couldn't load water points just now. Move the map to try again.");
+      toast("Couldn't load water points just now. Trying again…");
       render();
+      setTimeout(scheduleLoad, 5000);
     });
   }
   function fetchOverpass(q, i, signal) {
@@ -510,7 +515,7 @@
       updateLocateBtn();
       var now = Date.now();
       if (now - lastRender > 1500) { lastRender = now; render(); }
-      scheduleLoad();
+      // New areas load via the map's moveend; no need to request data on every location update
     }, function (err) {
       if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
       if (err && err.code === 1) toast(userAsked ? "Location is off. Allow it in your browser settings, or search a place." : "Showing London. Search a place or allow location.");
