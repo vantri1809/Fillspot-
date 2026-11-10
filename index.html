@@ -47,10 +47,10 @@
   }
   .iconbtn svg { width: 20px; height: 20px; }
 
-  .chips { pointer-events: auto; display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
+  .chips { pointer-events: auto; display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 10px; }
   .chip {
     border: 0; background: var(--bg); color: var(--ink); box-shadow: var(--shadow);
-    padding: 8px 14px; border-radius: 999px; font-size: 14px; font-weight: 600; cursor: pointer;
+    padding: 8px 12px; border-radius: 999px; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap;
   }
   .chip[aria-pressed="true"] { background: var(--ink); color: #fff; }
   .chip { display: inline-flex; align-items: center; gap: 7px; }
