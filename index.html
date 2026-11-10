@@ -221,7 +221,7 @@
   var inflightBox = null;   // area the current request covers
 
   // ---------- Map ----------
-  var map = L.map("map", { zoomControl: false, attributionControl: true })
+  var map = L.map("map", { zoomControl: false, attributionControl: true, preferCanvas: true })
     .setView([DEFAULT_VIEW.lat, DEFAULT_VIEW.lng], DEFAULT_VIEW.zoom);
   L.control.zoom({ position: "bottomright" }).addTo(map);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -328,9 +328,61 @@
     clearTimeout(loadTimer);
     loadTimer = setTimeout(loadVisible, 500);
   }
+  // ---------- Stored data (refreshed weekly by GitHub) ----------
+  // data/meta.json lists the map tiles; each tile holds the water points in a 0.25° square.
+  var meta;                 // undefined = still checking, null = no stored data, object = use tiles
+  var tileState = {};       // key -> "loading" | "done"
+  var tileSet = null;
+  fetch("data/meta.json", { cache: "no-cache" }).then(function (r) {
+    if (!r.ok) throw new Error("no data");
+    return r.json();
+  }).then(function (m) {
+    meta = m; tileSet = {};
+    (m.tiles || []).forEach(function (k) { tileSet[k] = true; });
+  }).catch(function () { meta = null; }).then(scheduleLoad);
+
+  function busy() {
+    if (inflight || meta === undefined) return true;
+    for (var k in tileState) if (tileState[k] === "loading") return true;
+    return false;
+  }
+  function minZoom() { return meta ? 11 : MIN_ZOOM_TO_LOAD; }
+  function loadTiles() {
+    var t = meta.tile || 0.25;
+    var b = map.getBounds().pad(0.3);
+    var keys = [];
+    for (var a = Math.floor(b.getSouth() / t); a <= Math.floor(b.getNorth() / t); a++)
+      for (var c = Math.floor(b.getWest() / t); c <= Math.floor(b.getEast() / t); c++) {
+        var k = a + "_" + c;
+        if (tileSet[k] && !tileState[k]) keys.push(k);
+      }
+    if (!keys.length) { render(); return; }
+    var pending = keys.length, failed = 0;
+    loading(true);
+    keys.forEach(function (k) {
+      tileState[k] = "loading";
+      fetch("data/tiles/" + k + ".json").then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      }).then(function (d) {
+        tileState[k] = "done";
+        (d.elements || []).forEach(addElement);
+      }).catch(function () {
+        delete tileState[k]; failed++;
+      }).then(function () {
+        if (--pending) return;
+        loading(false);
+        render();
+        if (failed) { toast("Some water points didn't load. Trying again…"); setTimeout(scheduleLoad, 4000); }
+      });
+    });
+  }
+
   function loadVisible() {
-    if (map.getZoom() < MIN_ZOOM_TO_LOAD) { toast("Zoom in to see water points", 0); render(); return; }
+    if (meta === undefined) return;          // still checking for stored data
+    if (map.getZoom() < minZoom()) { toast("Zoom in to see water points", 0); render(); return; }
     hideToast();
+    if (meta) { loadTiles(); return; }
     var view = map.getBounds();
     if (covered(view)) { render(); return; }
     // A request for this area is already on its way: let it finish rather than restarting it
@@ -433,7 +485,7 @@
     var list = $("list");
     var go = $("goBtn");
 
-    if (map.getZoom() < MIN_ZOOM_TO_LOAD) {
+    if (map.getZoom() < minZoom()) {
       $("sumTitle").textContent = "Zoom in to see water";
       $("sumSub").textContent = "Or search a place above";
       go.setAttribute("aria-disabled", "true"); go.removeAttribute("href");
@@ -441,10 +493,10 @@
       return;
     }
     if (!all.length) {
-      $("sumTitle").textContent = inflight ? "Looking for water…" : "No water points found here yet";
-      $("sumSub").textContent = inflight ? "Checking the map" : "Try zooming out or another area";
+      $("sumTitle").textContent = busy() ? "Looking for water…" : "No water points found here yet";
+      $("sumSub").textContent = busy() ? "Checking the map" : "Try zooming out or another area";
       go.setAttribute("aria-disabled", "true"); go.removeAttribute("href");
-      list.innerHTML = inflight ? "" : '<div class="empty">Nobody has mapped a refill point here yet. If you know one, you can add it to OpenStreetMap using the link below and it will show up here.</div>';
+      list.innerHTML = busy() ? "" : '<div class="empty">Nobody has mapped a refill point here yet. If you know one, you can add it to OpenStreetMap using the link below and it will show up here.</div>';
       return;
     }
     var nearest = all[0];
