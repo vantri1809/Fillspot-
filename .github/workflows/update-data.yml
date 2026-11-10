@@ -15,19 +15,33 @@ permissions:
 
 concurrency:
   group: update-data
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Download water points from OpenStreetMap
-        run: python scripts/update_data.py
+      - name: Install osmium
+        run: sudo apt-get update -q && sudo apt-get install -y -q osmium-tool
+      - name: Download Britain and Ireland from Geofabrik
+        run: curl -sSfL --retry 3 -o region.osm.pbf https://download.geofabrik.de/europe/britain-and-ireland-latest.osm.pbf && ls -lh region.osm.pbf
+      - name: Keep only drinking water and refill points
+        run: |
+          osmium tags-filter region.osm.pbf \
+            nwr/amenity=drinking_water,water_point \
+            nwr/drinking_water=yes \
+            nwr/drinking_water:refill=yes \
+            -o water.osm.pbf
+          osmium export water.osm.pbf -f geojsonseq -a type,id \
+            --format-option print_record_separator=false -o water.geojsonseq
+          wc -l water.geojsonseq
+      - name: Build map tiles
+        run: python scripts/update_data.py water.geojsonseq
       - name: Save the new data
         run: |
           git config user.name "github-actions[bot]"

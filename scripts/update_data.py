@@ -1,85 +1,63 @@
-"""Download UK drinking-water and refill points from OpenStreetMap (Overpass API)
-and save them as small map tiles the website loads directly.
+"""Turn an OpenStreetMap extract of Britain and Ireland into small map tiles
+of drinking-water and bottle-refill points for the website.
 
-Run by the "Update water data" GitHub Action every week.
+The "Update water data" GitHub Action downloads the extract from Geofabrik,
+filters it with osmium, and runs this on the result (one GeoJSON feature per line):
+
+    python scripts/update_data.py water.geojsonseq
 """
-import json, math, os, sys, time, urllib.parse, urllib.request
+import json, math, os, sys, time
 
-MIRRORS = [
-    "https://overpass-api.de/api/interpreter",
-    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
-    "https://overpass.private.coffee/api/interpreter",
-]
-UA = "Fillspot/1.0 (+https://github.com/vantri1809/Fillspot-)"
-# UK and Ireland, split into 2x2 degree boxes so each request stays small
-SOUTH, NORTH, WEST, EAST = 49.8, 61.0, -11.0, 2.0
-STEP = 2.0
-TILE = 0.25  # website tile size in degrees
+TILE = 0.25  # tile size in degrees (about 28 x 17 km in the UK)
 KEEP = ["name", "amenity", "shop", "man_made", "bottle", "fee", "indoor", "seasonal",
         "opening_hours", "drinking_water", "drinking_water:refill", "access",
         "operational_status", "disused:amenity"]
-OUT = os.path.join(os.path.dirname(__file__), "..", "data")
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
 
 
-def query(bbox):
-    b = "%.4f,%.4f,%.4f,%.4f" % bbox
-    return ("[out:json][timeout:180];("
-            f'nwr["amenity"="drinking_water"]({b});'
-            f'nwr["amenity"="water_point"]({b});'
-            f'nwr["man_made"="water_tap"]["drinking_water"="yes"]({b});'
-            f'nwr["drinking_water"="yes"]({b});'
-            f'nwr["drinking_water:refill"="yes"]({b});'
-            ");out center tags;")
+def wanted(t):
+    if t.get("amenity") in ("drinking_water", "water_point"):
+        return True
+    if t.get("drinking_water") == "yes" or t.get("drinking_water:refill") == "yes":
+        return True
+    return False
 
 
-def fetch(q):
-    last = None
-    for attempt in range(6):
-        url = MIRRORS[attempt % len(MIRRORS)]
-        try:
-            req = urllib.request.Request(url, data=urllib.parse.urlencode({"data": q}).encode(),
-                                         headers={"User-Agent": UA})
-            with urllib.request.urlopen(req, timeout=240) as r:
-                return json.load(r)
-        except Exception as e:  # noqa: BLE001
-            last = e
-            print(f"  {url} failed: {e}; retrying", flush=True)
-            time.sleep(10 * (attempt + 1))
-    raise RuntimeError(f"all mirrors failed: {last}")
+def centre(geom):
+    """Rough centre of any GeoJSON geometry (average of its coordinates)."""
+    xs, ys = [], []
+
+    def walk(c):
+        if isinstance(c[0], (int, float)):
+            xs.append(c[0]); ys.append(c[1])
+        else:
+            for part in c:
+                walk(part)
+    walk(geom["coordinates"])
+    return sum(ys) / len(ys), sum(xs) / len(xs)
 
 
-def main():
+def main(path):
     points = {}
-    boxes = []
-    lat = SOUTH
-    while lat < NORTH:
-        lng = WEST
-        while lng < EAST:
-            boxes.append((lat, lng, min(lat + STEP, NORTH), min(lng + STEP, EAST)))
-            lng += STEP
-        lat += STEP
-    failed = 0
-    for i, bbox in enumerate(boxes, 1):
-        print(f"[{i}/{len(boxes)}] {bbox}", flush=True)
-        try:
-            data = fetch(query(bbox))
-        except RuntimeError as e:
-            print(f"  giving up on this box: {e}", flush=True)
-            failed += 1
-            continue
-        for el in data.get("elements", []):
-            la = el.get("lat", (el.get("center") or {}).get("lat"))
-            lo = el.get("lon", (el.get("center") or {}).get("lon"))
-            if la is None or lo is None:
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip().lstrip("\x1e")
+            if not line:
                 continue
-            tags = {k: v for k, v in (el.get("tags") or {}).items() if k in KEEP}
-            points[f'{el["type"]}/{el["id"]}'] = {
-                "type": el["type"], "id": el["id"],
-                "lat": round(la, 6), "lon": round(lo, 6), "tags": tags}
-        time.sleep(3)
+            f = json.loads(line)
+            props = f.get("properties") or {}
+            tags = {k: v for k, v in props.items() if not k.startswith("@")}
+            if not wanted(tags) or not f.get("geometry"):
+                continue
+            lat, lon = centre(f["geometry"])
+            typ = props.get("@type", "node")
+            oid = props.get("@id", 0)
+            points[f"{typ}/{oid}"] = {
+                "type": typ, "id": oid, "lat": round(lat, 6), "lon": round(lon, 6),
+                "tags": {k: v for k, v in tags.items() if k in KEEP}}
 
-    if failed > len(boxes) // 4 or len(points) < 1000:
-        print(f"Too many failures ({failed} boxes, {len(points)} points); keeping old data.")
+    if len(points) < 1000:
+        print(f"Only {len(points)} points found; something went wrong, keeping old data.")
         sys.exit(1)
 
     tiles = {}
@@ -93,13 +71,13 @@ def main():
         os.remove(os.path.join(tdir, f))
     for key, els in tiles.items():
         els.sort(key=lambda e: (e["type"], e["id"]))
-        with open(os.path.join(tdir, key + ".json"), "w") as fh:
+        with open(os.path.join(tdir, key + ".json"), "w", encoding="utf-8") as fh:
             json.dump({"elements": els}, fh, separators=(",", ":"), ensure_ascii=False)
     with open(os.path.join(OUT, "meta.json"), "w") as fh:
         json.dump({"updated": time.strftime("%Y-%m-%d"), "tile": TILE, "count": len(points),
                    "tiles": sorted(tiles)}, fh, separators=(",", ":"))
-    print(f"Saved {len(points)} points in {len(tiles)} tiles ({failed} boxes failed).")
+    print(f"Saved {len(points)} points in {len(tiles)} tiles.")
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1])
