@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fillspot – free water refills near you</title>
+<meta name="description" content="Find free drinking water and bottle refill points near you.">
+<meta name="theme-color" content="#0b6bcb">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Fillspot">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b6bcb'/%3E%3Cpath d='M32 12C32 12 18 28 18 38a14 14 0 0 0 28 0C46 28 32 12 32 12z' fill='white'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+<style>
+  :root {
+    --blue: #0b6bcb;
+    --teal: #0f9d8a;
+    --ink: #14202b;
+    --muted: #5d6b78;
+    --bg: #ffffff;
+    --line: #e3e8ee;
+    --shadow: 0 6px 24px rgba(15, 30, 50, .18);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--ink); }
+  #map { position: fixed; inset: 0; z-index: 0; }
+
+  /* Top bar */
+  .top {
+    position: fixed; z-index: 1000; left: 0; right: 0; top: 0;
+    padding: calc(env(safe-area-inset-top) + 10px) 12px 0;
+    pointer-events: none;
+  }
+  .searchbar {
+    pointer-events: auto; display: flex; align-items: center; gap: 8px;
+    background: var(--bg); border-radius: 14px; box-shadow: var(--shadow);
+    padding: 6px 6px 6px 12px; max-width: 560px; margin: 0 auto;
+  }
+  .logo { width: 28px; height: 28px; flex: none; }
+  .searchbar input {
+    flex: 1; border: 0; outline: 0; font-size: 16px; padding: 8px 4px; min-width: 0; background: transparent; color: var(--ink);
+  }
+  .iconbtn {
+    border: 0; background: #eef4fb; color: var(--blue); border-radius: 10px;
+    width: 40px; height: 40px; display: grid; place-items: center; cursor: pointer; flex: none;
+  }
+  .iconbtn svg { width: 20px; height: 20px; }
+
+  .chips { pointer-events: auto; display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
+  .chip {
+    border: 0; background: var(--bg); color: var(--ink); box-shadow: var(--shadow);
+    padding: 8px 14px; border-radius: 999px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .chip[aria-pressed="true"] { background: var(--ink); color: #fff; }
+
+  .toast {
+    pointer-events: auto; max-width: 560px; margin: 10px auto 0; background: var(--ink); color: #fff;
+    border-radius: 12px; padding: 10px 14px; font-size: 14px; display: none; text-align: center;
+  }
+  .toast.show { display: block; }
+
+  /* Bottom sheet */
+  .sheet {
+    position: fixed; z-index: 1000; left: 0; right: 0; bottom: 0;
+    background: var(--bg); border-radius: 18px 18px 0 0; box-shadow: 0 -6px 24px rgba(15, 30, 50, .16);
+    max-width: 640px; margin: 0 auto;
+    padding-bottom: env(safe-area-inset-bottom);
+    display: flex; flex-direction: column; max-height: 52vh; transition: max-height .25s ease;
+  }
+  .sheet.collapsed { max-height: 132px; }
+  .handle { display: block; width: 100%; border: 0; background: transparent; padding: 8px 0 2px; cursor: pointer; }
+  .handle span { display: block; width: 40px; height: 5px; border-radius: 3px; background: #cfd7e0; margin: 0 auto; }
+  .sheet-head { padding: 4px 16px 10px; display: flex; align-items: center; gap: 12px; }
+  .sheet-head .summary { flex: 1; min-width: 0; }
+  .summary h2 { margin: 0; font-size: 17px; }
+  .summary p { margin: 2px 0 0; color: var(--muted); font-size: 14px; }
+  .go {
+    border: 0; background: var(--blue); color: #fff; font-weight: 700; font-size: 15px;
+    padding: 12px 16px; border-radius: 12px; cursor: pointer; white-space: nowrap; text-decoration: none;
+  }
+  .go[aria-disabled="true"] { opacity: .45; pointer-events: none; }
+  .list { overflow-y: auto; border-top: 1px solid var(--line); -webkit-overflow-scrolling: touch; }
+  .item { display: flex; gap: 12px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .item:hover, .item.active { background: #f4f8fc; }
+  .dot { width: 14px; height: 14px; border-radius: 50%; flex: none; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.15); }
+  .dot.public { background: var(--blue); }
+  .dot.business { background: var(--teal); }
+  .item .info { flex: 1; min-width: 0; }
+  .item .name { font-weight: 600; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .item .meta { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .item .dist { font-weight: 700; font-size: 14px; text-align: right; white-space: nowrap; }
+  .item .dist small { display: block; color: var(--muted); font-weight: 500; }
+  .empty { padding: 18px 16px; color: var(--muted); font-size: 14px; line-height: 1.45; }
+  .foot { padding: 10px 16px 14px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+  .foot a { color: var(--blue); }
+
+  /* Map bits */
+  .me { width: 18px; height: 18px; border-radius: 50%; background: #1a73e8; border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(26,115,232,.25); }
+  .leaflet-popup-content { margin: 12px 14px; font-size: 14px; line-height: 1.4; }
+  .pop h3 { margin: 0 0 4px; font-size: 15px; }
+  .pop .tag { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; color: #fff; margin-bottom: 6px; }
+  .pop .tag.public { background: var(--blue); }
+  .pop .tag.business { background: var(--teal); }
+  .pop .row { color: var(--muted); font-size: 13px; }
+  .pop a.dir { display: inline-block; margin-top: 8px; background: var(--blue); color: #fff !important; padding: 8px 12px; border-radius: 10px; font-weight: 700; text-decoration: none; }
+  .leaflet-bottom { bottom: 140px; }
+  /* Maps app chooser */
+  .chooser { position: fixed; inset: 0; z-index: 3000; display: none; }
+  .chooser.open { display: block; }
+  .chooser .backdrop { position: absolute; inset: 0; background: rgba(10, 20, 30, .45); }
+  .chooser .panel {
+    position: absolute; left: 0; right: 0; bottom: 0; max-width: 480px; margin: 0 auto;
+    background: var(--bg); border-radius: 18px 18px 0 0; padding: 18px 16px calc(16px + env(safe-area-inset-bottom));
+    box-shadow: 0 -6px 24px rgba(15, 30, 50, .2);
+  }
+  .chooser h3 { margin: 0 0 2px; font-size: 17px; }
+  .chooser .to { margin: 0 0 14px; color: var(--muted); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chooser a.opt {
+    display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 12px;
+    margin-bottom: 10px; text-decoration: none; color: var(--ink); font-weight: 600; font-size: 16px;
+  }
+  .chooser a.opt:active { background: #f4f8fc; }
+  .chooser .ico { width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center; color: #fff; font-weight: 800; font-size: 15px; flex: none; }
+  .chooser .remember { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); margin: 6px 2px 12px; }
+  .chooser .remember input { width: 18px; height: 18px; }
+  .chooser .cancel { width: 100%; border: 0; background: #eef1f5; color: var(--ink); font-weight: 700; font-size: 16px; padding: 13px; border-radius: 12px; cursor: pointer; }
+  .loading-bar { position: fixed; top: 0; left: 0; height: 3px; background: var(--blue); z-index: 2000; width: 0; transition: width .4s ease; }
+</style>
+</head>
+<body>
+<div class="loading-bar" id="loadbar"></div>
+<div id="map" aria-label="Map of water refill points"></div>
+
+<div class="top">
+  <form class="searchbar" id="searchForm" role="search">
+    <svg class="logo" viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="14" fill="#0b6bcb"/><path d="M32 12C32 12 18 28 18 38a14 14 0 0 0 28 0C46 28 32 12 32 12z" fill="#fff"/></svg>
+    <input id="q" type="search" placeholder="Search a town, street or postcode" autocomplete="off" enterkeyhint="search" aria-label="Search location">
+    <button class="iconbtn" type="button" id="locateBtn" title="Use my location" aria-label="Use my location">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+    </button>
+  </form>
+  <div class="chips" role="group" aria-label="Filter">
+    <button class="chip" data-filter="all" aria-pressed="true">All</button>
+    <button class="chip" data-filter="public" aria-pressed="false">Fountains &amp; taps</button>
+    <button class="chip" data-filter="business" aria-pressed="false">Cafés &amp; shops</button>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</div>
+
+<section class="sheet collapsed" id="sheet" aria-label="Nearby water points">
+  <button class="handle" id="handle" aria-label="Show or hide list"><span></span></button>
+  <div class="sheet-head">
+    <div class="summary">
+      <h2 id="sumTitle">Finding water near you…</h2>
+      <p id="sumSub">Allow location, or search above</p>
+    </div>
+    <a class="go" id="goBtn" aria-disabled="true" target="_blank" rel="noopener">Take me there</a>
+  </div>
+  <div class="list" id="list"></div>
+  <div class="foot">
+    Water points from <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors.
+    Missing a spot? <a href="https://www.openstreetmap.org/edit" target="_blank" rel="noopener" id="addLink">Add it to the map</a>.
+    <span id="prefNote" hidden><br>Directions open in <strong id="prefName"></strong>. <a href="#" id="prefReset">Change</a></span>
+  </div>
+</section>
+
+<div class="chooser" id="chooser" role="dialog" aria-modal="true" aria-labelledby="chooserTitle">
+  <div class="backdrop" id="chooserBackdrop"></div>
+  <div class="panel">
+    <h3 id="chooserTitle">Open directions in…</h3>
+    <p class="to" id="chooserTo"></p>
+    <a class="opt" id="optApple" target="_blank" rel="noopener" data-app="apple">
+      <span class="ico" style="background:#34c759">A</span>Apple Maps
+    </a>
+    <a class="opt" id="optGoogle" target="_blank" rel="noopener" data-app="google">
+      <span class="ico" style="background:#4285f4">G</span>Google Maps
+    </a>
+    <label class="remember"><input type="checkbox" id="rememberApp"> Remember my choice</label>
+    <button class="cancel" type="button" id="chooserCancel">Cancel</button>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script>
+(function () {
+  "use strict";
+
+  // ---------- Settings ----------
+  var DEFAULT_VIEW = { lat: 51.5074, lng: -0.1278, zoom: 15 }; // London, used if location is unavailable
+  var MIN_ZOOM_TO_LOAD = 13;
+  var WALK_M_PER_MIN = 80;
+  var OVERPASS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter"
+  ];
+
+  // ---------- Can the map run here? ----------
+  if (!window.L || !window.fetch) {
+    document.getElementById("sumTitle").textContent = "The map can't load here";
+    document.getElementById("sumSub").textContent = "Open Fillspot from its web address (https://…) in Safari or Chrome. Previews inside other apps block maps and location.";
+    document.getElementById("map").style.background = "#eef4fb";
+    return;
+  }
+
+  // ---------- State ----------
+  var points = {};          // id -> point
+  var markers = {};         // id -> leaflet marker
+  var loadedBoxes = [];     // bounds already fetched
+  var me = null;            // {lat,lng} user's position
+  var meMarker = null;
+  var accCircle = null;     // accuracy ring around the user
+  var watchId = null;       // live location watcher
+  var follow = true;        // keep the map centred on the user while they walk
+  var lastRender = 0;
+  var filter = "all";
+  var activeId = null;
+  var loadTimer = null;
+  var inflight = null;
+
+  // ---------- Map ----------
+  var map = L.map("map", { zoomControl: false, attributionControl: true })
+    .setView([DEFAULT_VIEW.lat, DEFAULT_VIEW.lng], DEFAULT_VIEW.zoom);
+  L.control.zoom({ position: "bottomright" }).addTo(map);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+  }).addTo(map);
+
+  // ---------- Helpers ----------
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function toast(msg, ms) {
+    var t = $("toast");
+    t.textContent = msg; t.classList.add("show");
+    clearTimeout(toast._t);
+    if (ms !== 0) toast._t = setTimeout(function () { t.classList.remove("show"); }, ms || 3500);
+  }
+  function hideToast() { $("toast").classList.remove("show"); }
+  function loading(on) {
+    var b = $("loadbar");
+    if (on) { b.style.width = "0"; requestAnimationFrame(function () { b.style.width = "70%"; }); }
+    else { b.style.width = "100%"; setTimeout(function () { b.style.width = "0"; }, 400); }
+  }
+  function distM(a, b) {
+    var R = 6371000, toR = Math.PI / 180;
+    var dLat = (b.lat - a.lat) * toR, dLng = (b.lng - a.lng) * toR;
+    var x = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(a.lat * toR) * Math.cos(b.lat * toR) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return 2 * R * Math.asin(Math.sqrt(x));
+  }
+  function fmtDist(m) { return m < 1000 ? Math.round(m / 10) * 10 + " m" : (m / 1000).toFixed(1) + " km"; }
+  function fmtWalk(m) { var min = Math.max(1, Math.round(m / WALK_M_PER_MIN)); return min + " min walk"; }
+  // ---------- Directions: which maps app ----------
+  var APPS = {
+    apple: { name: "Apple Maps", url: function (p) { return "https://maps.apple.com/?daddr=" + p.lat + "," + p.lng + "&dirflg=w"; } },
+    google: { name: "Google Maps", url: function (p) { return "https://www.google.com/maps/dir/?api=1&travelmode=walking&destination=" + p.lat + "," + p.lng; } }
+  };
+  var IS_APPLE = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);
+  var IS_ANDROID = /Android/.test(navigator.userAgent);
+  function getPref() { try { var v = localStorage.getItem("fillspot.mapsApp"); return APPS[v] ? v : null; } catch (e) { return null; } }
+  function setPref(v) { try { if (v) localStorage.setItem("fillspot.mapsApp", v); else localStorage.removeItem("fillspot.mapsApp"); } catch (e) {} showPref(); }
+  function showPref() {
+    var pref = getPref();
+    $("prefNote").hidden = !pref;
+    if (pref) $("prefName").textContent = APPS[pref].name;
+  }
+  // With a remembered app the link goes straight there; otherwise it opens the chooser.
+  function directionsUrl(p) { var pref = getPref(); return pref ? APPS[pref].url(p) : "#"; }
+  var chooserPoint = null;
+  function openChooser(p) {
+    chooserPoint = p;
+    $("chooserTo").textContent = "To " + p.name;
+    $("optApple").href = APPS.apple.url(p);
+    $("optGoogle").href = APPS.google.url(p);
+    $("optApple").style.display = IS_ANDROID ? "none" : "";   // Apple Maps doesn't exist on Android
+    // Put the phone's own maps app first
+    var panel = $("optApple").parentNode;
+    if (IS_APPLE) panel.insertBefore($("optApple"), $("optGoogle"));
+    else panel.insertBefore($("optGoogle"), $("optApple"));
+    $("rememberApp").checked = false;
+    $("chooser").classList.add("open");
+  }
+  function closeChooser() { $("chooser").classList.remove("open"); chooserPoint = null; }
+  function origin() { var c = map.getCenter(); return me || { lat: c.lat, lng: c.lng }; }
+
+  // ---------- Classify OSM features ----------
+  var BUSINESS = /^(cafe|restaurant|pub|bar|fast_food|ice_cream|library|community_centre|townhall|pharmacy)$/;
+  function classify(tags) {
+    if (tags.amenity === "drinking_water" || tags.amenity === "water_point" || tags.man_made === "water_tap") return "public";
+    if (tags.shop || BUSINESS.test(tags.amenity || "") || tags["drinking_water:refill"] === "yes") return "business";
+    return "public";
+  }
+  function label(tags, kind) {
+    if (tags.name) return tags.name;
+    if (tags.amenity === "water_point") return "Water point";
+    if (tags.man_made === "water_tap") return "Water tap";
+    if (tags.amenity === "toilets") return "Tap at public toilets";
+    return kind === "public" ? "Drinking fountain" : "Refill point";
+  }
+  function details(tags) {
+    var bits = [];
+    if (tags.amenity && !/^(drinking_water|water_point)$/.test(tags.amenity)) bits.push(tags.amenity.replace(/_/g, " "));
+    if (tags.shop) bits.push(tags.shop.replace(/_/g, " ") + " shop");
+    if (tags.bottle === "yes") bits.push("bottle friendly");
+    if (tags.fee === "yes") bits.push("may charge");
+    if (tags.indoor === "yes") bits.push("indoors");
+    if (tags.seasonal && tags.seasonal !== "no") bits.push("seasonal");
+    return bits;
+  }
+  function excluded(tags) {
+    return tags.access === "private" || tags.access === "no" || tags.drinking_water === "no" ||
+      tags["disused:amenity"] || tags.operational_status === "broken";
+  }
+
+  // ---------- Load from OpenStreetMap ----------
+  function covered(bounds) {
+    for (var i = 0; i < loadedBoxes.length; i++) if (loadedBoxes[i].contains(bounds)) return true;
+    return false;
+  }
+  function scheduleLoad() {
+    clearTimeout(loadTimer);
+    loadTimer = setTimeout(loadVisible, 500);
+  }
+  function loadVisible() {
+    if (map.getZoom() < MIN_ZOOM_TO_LOAD) { toast("Zoom in to see water points", 0); render(); return; }
+    hideToast();
+    var view = map.getBounds();
+    if (covered(view)) { render(); return; }
+    var box = view.pad(0.5);
+    var bb = [box.getSouth(), box.getWest(), box.getNorth(), box.getEast()].map(function (n) { return n.toFixed(5); }).join(",");
+    var q = "[out:json][timeout:25];(" +
+      'nwr["amenity"="drinking_water"](' + bb + ");" +
+      'nwr["amenity"="water_point"](' + bb + ");" +
+      'nwr["man_made"="water_tap"]["drinking_water"="yes"](' + bb + ");" +
+      'nwr["drinking_water"="yes"](' + bb + ");" +
+      'nwr["drinking_water:refill"="yes"](' + bb + ");" +
+      ");out center tags;";
+    if (inflight) inflight.abort();
+    inflight = new AbortController();
+    var signal = inflight.signal;
+    loading(true);
+    fetchOverpass(q, 0, signal).then(function (data) {
+      inflight = null;
+      loadedBoxes.push(box);
+      (data.elements || []).forEach(addElement);
+      loading(false);
+      render();
+    }).catch(function (err) {
+      if (err && err.name === "AbortError") return;
+      inflight = null;
+      loading(false);
+      toast("Couldn't load water points just now. Move the map to try again.");
+      render();
+    });
+  }
+  function fetchOverpass(q, i, signal) {
+    return fetch(OVERPASS[i], {
+      method: "POST",
+      body: "data=" + encodeURIComponent(q),
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      signal: signal
+    }).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }).catch(function (err) {
+      if (err && err.name === "AbortError") throw err;
+      if (i + 1 < OVERPASS.length) return fetchOverpass(q, i + 1, signal);
+      throw err;
+    });
+  }
+  function addElement(el) {
+    var id = el.type + "/" + el.id;
+    if (points[id]) return;
+    var tags = el.tags || {};
+    if (excluded(tags)) return;
+    var lat = el.lat != null ? el.lat : el.center && el.center.lat;
+    var lng = el.lon != null ? el.lon : el.center && el.center.lon;
+    if (lat == null || lng == null) return;
+    var kind = classify(tags);
+    var p = { id: id, lat: lat, lng: lng, kind: kind, name: label(tags, kind), bits: details(tags), hours: tags.opening_hours || "" };
+    points[id] = p;
+    var m = L.circleMarker([lat, lng], {
+      radius: 9, weight: 3, color: "#fff", fillOpacity: 1,
+      fillColor: kind === "public" ? "#0b6bcb" : "#0f9d8a"
+    });
+    m.bindPopup(function () { return popupHtml(p); }, { maxWidth: 260 });
+    m.on("click", function () { setActive(id, false); });
+    markers[id] = m;
+  }
+  function popupHtml(p) {
+    var d = distM(origin(), p);
+    return '<div class="pop">' +
+      '<span class="tag ' + p.kind + '">' + (p.kind === "public" ? "Free public water" : "Café / shop refill") + "</span>" +
+      "<h3>" + esc(p.name) + "</h3>" +
+      '<div class="row">' + fmtDist(d) + " · " + fmtWalk(d) + "</div>" +
+      (p.bits.length ? '<div class="row">' + esc(p.bits.join(" · ")) + "</div>" : "") +
+      (p.hours ? '<div class="row">Hours: ' + esc(p.hours) + "</div>" : "") +
+      '<a class="dir" data-dir="' + esc(p.id) + '" href="' + directionsUrl(p) + '" target="_blank" rel="noopener">Directions</a>' +
+      "</div>";
+  }
+
+  // ---------- Render ----------
+  function visiblePoints() {
+    var view = map.getBounds().pad(0.2);
+    var o = origin();
+    return Object.keys(points).map(function (k) { return points[k]; })
+      .filter(function (p) { return (filter === "all" || p.kind === filter); })
+      .map(function (p) { return { p: p, d: distM(o, p), inView: view.contains([p.lat, p.lng]) }; })
+      .sort(function (a, b) { return a.d - b.d; });
+  }
+  function render() {
+    // markers
+    Object.keys(markers).forEach(function (id) {
+      var show = filter === "all" || points[id].kind === filter;
+      var on = map.hasLayer(markers[id]);
+      if (show && !on) markers[id].addTo(map);
+      if (!show && on) map.removeLayer(markers[id]);
+    });
+
+    var all = visiblePoints();
+    var near = all.filter(function (x) { return x.inView; });
+    var list = $("list");
+    var go = $("goBtn");
+
+    if (map.getZoom() < MIN_ZOOM_TO_LOAD) {
+      $("sumTitle").textContent = "Zoom in to see water";
+      $("sumSub").textContent = "Or search a place above";
+      go.setAttribute("aria-disabled", "true"); go.removeAttribute("href");
+      list.innerHTML = "";
+      return;
+    }
+    if (!all.length) {
+      $("sumTitle").textContent = inflight ? "Looking for water…" : "No water points found here yet";
+      $("sumSub").textContent = inflight ? "Checking the map" : "Try zooming out or another area";
+      go.setAttribute("aria-disabled", "true"); go.removeAttribute("href");
+      list.innerHTML = inflight ? "" : '<div class="empty">Nobody has mapped a refill point here yet. If you know one, you can add it to OpenStreetMap using the link below and it will show up here.</div>';
+      return;
+    }
+    var nearest = all[0];
+    $("sumTitle").textContent = "Nearest: " + nearest.p.name;
+    $("sumSub").textContent = fmtDist(nearest.d) + " · " + fmtWalk(nearest.d) + " · " + near.length + " on screen";
+    go.removeAttribute("aria-disabled");
+    go.href = directionsUrl(nearest.p);
+    go.setAttribute("data-dir", nearest.p.id);
+
+    var shown = all.slice(0, 50);
+    list.innerHTML = shown.map(function (x) {
+      var p = x.p;
+      var meta = (p.kind === "public" ? "Public fountain / tap" : "Café or shop refill") + (p.bits.length ? " · " + p.bits.join(" · ") : "");
+      return '<div class="item' + (p.id === activeId ? " active" : "") + '" data-id="' + esc(p.id) + '" role="button" tabindex="0">' +
+        '<span class="dot ' + p.kind + '"></span>' +
+        '<div class="info"><div class="name">' + esc(p.name) + '</div><div class="meta">' + esc(meta) + "</div></div>" +
+        '<div class="dist">' + fmtDist(x.d) + "<small>" + fmtWalk(x.d) + "</small></div></div>";
+    }).join("");
+  }
+  function setActive(id, fly) {
+    activeId = id;
+    var p = points[id];
+    if (!p) return;
+    if (fly) {
+      map.flyTo([p.lat, p.lng], Math.max(map.getZoom(), 17), { duration: 0.6 });
+      setTimeout(function () { markers[id].openPopup(); }, 650);
+    }
+    var items = document.querySelectorAll(".item");
+    for (var i = 0; i < items.length; i++) items[i].classList.toggle("active", items[i].getAttribute("data-id") === id);
+  }
+
+  // ---------- Location ----------
+  // Live tracking: the blue dot moves as you walk, distances update,
+  // and the map follows you until you drag it (tap the target button to follow again).
+  function locate(userAsked) {
+    if (!navigator.geolocation) {
+      if (userAsked) toast("Your browser can't share location. Search a place instead.");
+      scheduleLoad(); return;
+    }
+    follow = true;
+    if (me && watchId !== null) {           // already tracking: just recentre
+      map.setView([me.lat, me.lng], Math.max(map.getZoom(), 16));
+      updateLocateBtn();
+      return;
+    }
+    if (userAsked) toast("Finding you…", 0);
+    var first = true;
+    if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+    watchId = navigator.geolocation.watchPosition(function (pos) {
+      me = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      var acc = Math.min(pos.coords.accuracy || 0, 500);
+      if (!meMarker) {
+        meMarker = L.marker([me.lat, me.lng], {
+          icon: L.divIcon({ className: "", html: '<div class="me"></div>', iconSize: [18, 18], iconAnchor: [9, 9] }),
+          interactive: false, keyboard: false, zIndexOffset: 1000
+        }).addTo(map);
+        accCircle = L.circle([me.lat, me.lng], { radius: acc, color: "#1a73e8", weight: 1, fillOpacity: 0.08, interactive: false }).addTo(map);
+      } else {
+        meMarker.setLatLng([me.lat, me.lng]);
+        accCircle.setLatLng([me.lat, me.lng]).setRadius(acc);
+      }
+      if (first) {
+        first = false; hideToast();
+        map.setView([me.lat, me.lng], 16);
+      } else if (follow) {
+        map.panTo([me.lat, me.lng], { animate: true, duration: 0.5 });
+      }
+      updateLocateBtn();
+      var now = Date.now();
+      if (now - lastRender > 1500) { lastRender = now; render(); }
+      scheduleLoad();
+    }, function (err) {
+      if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+      if (err && err.code === 1) toast(userAsked ? "Location is off. Allow it in your browser settings, or search a place." : "Showing London. Search a place or allow location.");
+      else toast("Couldn't get your location. Search a place instead.");
+      scheduleLoad();
+    }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 5000 });
+  }
+  function stopTracking() {
+    if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+    me = null;
+    if (meMarker) { map.removeLayer(meMarker); meMarker = null; }
+    if (accCircle) { map.removeLayer(accCircle); accCircle = null; }
+    updateLocateBtn();
+  }
+  function updateLocateBtn() {
+    var b = $("locateBtn");
+    var on = watchId !== null && follow;
+    b.style.background = on ? "var(--blue)" : "#eef4fb";
+    b.style.color = on ? "#fff" : "var(--blue)";
+    b.setAttribute("aria-pressed", String(on));
+  }
+
+  // ---------- Search ----------
+  $("searchForm").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var q = $("q").value.trim();
+    if (!q) return;
+    $("q").blur();
+    loading(true);
+    fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=gb&q=" + encodeURIComponent(q), {
+      headers: { "Accept-Language": "en-GB" }
+    }).then(function (r) { return r.json(); }).then(function (res) {
+      loading(false);
+      if (!res || !res.length) { toast("Couldn't find \"" + q + "\". Try a town or postcode."); return; }
+      stopTracking();
+      map.setView([+res[0].lat, +res[0].lon], 16);
+    }).catch(function () { loading(false); toast("Search isn't working right now. Try again in a moment."); });
+  });
+  $("locateBtn").addEventListener("click", function () { locate(true); });
+
+  // ---------- UI wiring ----------
+  Array.prototype.forEach.call(document.querySelectorAll(".chip"), function (c) {
+    c.addEventListener("click", function () {
+      filter = c.getAttribute("data-filter");
+      Array.prototype.forEach.call(document.querySelectorAll(".chip"), function (o) { o.setAttribute("aria-pressed", String(o === c)); });
+      render();
+    });
+  });
+  $("handle").addEventListener("click", function () { $("sheet").classList.toggle("collapsed"); });
+  document.querySelector(".sheet-head .summary").addEventListener("click", function () { $("sheet").classList.toggle("collapsed"); });
+  $("list").addEventListener("click", function (e) {
+    var item = e.target.closest(".item");
+    if (!item) return;
+    $("sheet").classList.add("collapsed");
+    setActive(item.getAttribute("data-id"), true);
+  });
+  $("list").addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && e.target.classList.contains("item")) e.target.click();
+  });
+  // Directions buttons (popup + "Take me there")
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest("a[data-dir]");
+    if (!a) return;
+    var p = points[a.getAttribute("data-dir")];
+    if (!p) return;
+    var pref = getPref();
+    if (pref) { a.href = APPS[pref].url(p); return; }   // go straight to the remembered app
+    e.preventDefault();
+    openChooser(p);
+  });
+  ["optApple", "optGoogle"].forEach(function (id) {
+    $(id).addEventListener("click", function () {
+      if ($("rememberApp").checked) setPref($(id).getAttribute("data-app"));
+      setTimeout(closeChooser, 50);   // let the link open first
+    });
+  });
+  $("chooserCancel").addEventListener("click", closeChooser);
+  $("chooserBackdrop").addEventListener("click", closeChooser);
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeChooser(); });
+  $("prefReset").addEventListener("click", function (e) {
+    e.preventDefault();
+    setPref(null);
+    render();
+    toast("You'll be asked which maps app to use next time.");
+  });
+  showPref();
+
+  map.on("dragstart", function () { follow = false; updateLocateBtn(); });
+  document.addEventListener("visibilitychange", function () {
+    // Save battery: pause tracking when the page is hidden, resume when it's back.
+    if (document.hidden && watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+    else if (!document.hidden && me && watchId === null) locate(false);
+  });
+  map.on("moveend", function () {
+    var c = map.getCenter();
+    $("addLink").href = "https://www.openstreetmap.org/edit#map=19/" + c.lat.toFixed(5) + "/" + c.lng.toFixed(5);
+    scheduleLoad();
+  });
+
+  // ---------- Start ----------
+  locate(false);
+})();
+</script>
+</body>
+</html>
