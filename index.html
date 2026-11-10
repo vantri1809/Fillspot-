@@ -53,6 +53,10 @@
     padding: 8px 14px; border-radius: 999px; font-size: 14px; font-weight: 600; cursor: pointer;
   }
   .chip[aria-pressed="true"] { background: var(--ink); color: #fff; }
+  .chip { display: inline-flex; align-items: center; gap: 7px; }
+  .key { width: 12px; height: 12px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.18); flex: none; }
+  .key.public { background: var(--blue); }
+  .key.business { background: var(--teal); }
 
   .toast {
     pointer-events: auto; max-width: 560px; margin: 10px auto 0; background: var(--ink); color: #fff;
@@ -142,8 +146,8 @@
   </form>
   <div class="chips" role="group" aria-label="Filter">
     <button class="chip" data-filter="all" aria-pressed="true">All</button>
-    <button class="chip" data-filter="public" aria-pressed="false">Fountains &amp; taps</button>
-    <button class="chip" data-filter="business" aria-pressed="false">Cafés &amp; shops</button>
+    <button class="chip" data-filter="public" aria-pressed="false"><span class="key public" aria-hidden="true"></span>Fountains &amp; taps</button>
+    <button class="chip" data-filter="business" aria-pressed="false"><span class="key business" aria-hidden="true"></span>Cafés &amp; shops</button>
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 </div>
